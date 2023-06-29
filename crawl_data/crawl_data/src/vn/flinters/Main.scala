@@ -1,9 +1,7 @@
 package vn.flinters
 
-object Hello extends App {
-
+object Main extends App {
   def msg = "Hello World!"
 
   println(msg)
 }
-
