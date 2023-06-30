@@ -4,7 +4,7 @@ import akka.actor.ActorSystem
 import akka.stream.scaladsl.{FileIO, Flow, Keep, Sink, Source}
 import akka.stream.{ActorAttributes, ActorMaterializer, IOResult, Supervision}
 import akka.util.ByteString
-import play.api.libs.json.{JsArray, JsValue, Json}
+import play.api.libs.json.{JsArray, Json}
 import play.api.libs.ws.ahc.StandaloneAhcWSClient
 import play.shaded.ahc.org.asynchttpclient.DefaultAsyncHttpClient
 
@@ -73,14 +73,14 @@ object Main extends App {
     })
     .map(x => {
       x.map { case (orgId, innerMap) =>
-        s"$orgId,${innerMap.map { case (date, duration) => duration }.mkString(",")}"
+        s"$orgId,${innerMap.map { case (_, duration) => duration }.mkString(",")}"
       }
     }.mkString("\n"))
     .map(ByteString(_))
     .toMat(FileIO.toPath(Path.of(fileResultName)))(Keep.right)
 
 
-  val startProcessTime = System.currentTimeMillis()
+  private val startProcessTime = System.currentTimeMillis()
   private val sessionEndpoints: Seq[String] = Json.parse(jsonString).as[Seq[String]]
 
   private val endpointSource = Source(sessionEndpoints)
@@ -122,12 +122,10 @@ object Main extends App {
     val minutes: Long = duration.toMinutesPart
     val seconds: Long = duration.toSecondsPart
 
-    val  a =   f"$hours%02d:$minutes%02d:$seconds%02d"
-    println(a)
-    a
+    f"$hours%02d:$minutes%02d:$seconds%02d"
   }
 
-  val decider: Supervision.Decider = {
+  private val decider: Supervision.Decider = {
     case e: play.api.libs.json.JsResultException =>
       println(e.getMessage)
       Supervision.Resume
