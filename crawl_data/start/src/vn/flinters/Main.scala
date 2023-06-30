@@ -27,8 +27,15 @@ object Main extends App {
   private type OrgId = String
   private type DurationTime = String
   private lazy val orgIdMap = OrganizationIdMapping.get
-  private lazy val regex = ".*ORGANIZA=\\d*=(\\w+)\\+.+bq$".r
+
+
+  // importance parts
+  private lazy val regex = ".*ORGANIZA=\\d*=(\\w+)\\+main$".r
   private lazy val parseOrgIdPattern = raw"\b[a-fA-F0-9]{8}\b".r
+
+
+
+
   private val jsonFile = "session_endpoints.json"
   private val jsonSource = scala.io.Source.fromFile(jsonFile)
   private val ws = new StandaloneAhcWSClient(new DefaultAsyncHttpClient())

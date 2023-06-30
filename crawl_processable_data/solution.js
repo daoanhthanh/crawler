@@ -6,14 +6,14 @@ const sessionValue = [...rows].map(
 );
 
 // lấy các pathname dẫn đến api get-session và copy vào clipboard
-const processable = copy(
+copy(
 	[...rows]
 		.map(
 			(row) =>
 				"https://digdag-ee.pyxis-social.com/api" +
 				[...row.querySelectorAll("td")][0].querySelector("a").pathname
 		)
-		.slice(0, 60)
+		.slice(0, 61)
 );
 
 // được kết quả như này
