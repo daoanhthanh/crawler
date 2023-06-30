@@ -1,9 +1,3 @@
-  "https://digdag-ee.pyxis-social.com/api/sessions/13917",
-  "https://digdag-ee.pyxis-social.com/api/sessions/13905",
-  "https://digdag-ee.pyxis-social.com/api/sessions/13893",
-  "https://digdag-ee.pyxis-social.com/api/sessions/13881",
-  "https://digdag-ee.pyxis-social.com/api/sessions/13869",
-  "https://digdag-ee.pyxis-social.com/api/sessions/13857",
   "https://digdag-ee.pyxis-social.com/api/sessions/13845",
   "https://digdag-ee.pyxis-social.com/api/sessions/13833",
   "https://digdag-ee.pyxis-social.com/api/sessions/13821",
@@ -55,4 +49,5 @@
   "https://digdag-ee.pyxis-social.com/api/sessions/13254",
   "https://digdag-ee.pyxis-social.com/api/sessions/13242",
   "https://digdag-ee.pyxis-social.com/api/sessions/13230",
-  "https://digdag-ee.pyxis-social.com/api/sessions/13218"
+  "https://digdag-ee.pyxis-social.com/api/sessions/13218",
+  "https://digdag-ee.pyxis-social.com/api/sessions/13206"

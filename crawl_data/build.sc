@@ -7,7 +7,6 @@ object start extends ScalaModule {
 
   override def forkArgs = Seq("-Xmx8g")
 
-
   // run this to update dependencies: ./mill crawl_data.resolvedIvyDeps
   override def ivyDeps = Agg(
     ivy"com.typesafe.akka::akka-stream:2.8.2",

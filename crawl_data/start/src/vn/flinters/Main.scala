@@ -1,20 +1,24 @@
 package vn.flinters
 
-import akka.NotUsed
-import akka.actor.ActorSystem
-import akka.stream.{ActorMaterializer, IOResult}
+import akka.actor.{ActorRef, ActorSystem}
+import akka.pattern.ask
 import akka.stream.scaladsl.{FileIO, Flow, Keep, Sink, Source}
+import akka.stream.{ActorMaterializer, IOResult}
 import akka.util.ByteString
 import play.api.libs.json.{JsArray, Json}
 import play.api.libs.ws.ahc.StandaloneAhcWSClient
 import play.shaded.ahc.org.asynchttpclient.DefaultAsyncHttpClient
 
+import java.io.{BufferedWriter, FileWriter}
 import java.nio.file.Path
 import java.time.{Duration, LocalDate, ZonedDateTime}
 import scala.collection.immutable.ListMap
+import scala.collection.mutable
 import scala.collection.mutable.{Map => MutableMap}
-import scala.concurrent.{ExecutionContextExecutor, Future}
-import scala.util.Sorting
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.{Await, ExecutionContextExecutor, Future}
+import scala.language.postfixOps
+import scala.reflect.io.File
 
 object Main extends App {
   implicit val system: ActorSystem = ActorSystem("json-reader")
@@ -34,23 +38,7 @@ object Main extends App {
     jsonSource.close()
   }
 
-  private val sessionEndpoints: Seq[String] = Json.parse(jsonString).as[Seq[String]]
-  private val endpointSource = Source(sessionEndpoints)
-  private val fetchAttemptFlow = Flow.fromFunction[String, Future[JsArray]](endpoint => {
-    println(endpoint)
-    for {
-      attemptId <- ws.url(endpoint).get().map(x => ((Json.parse(x.body) \ "lastAttempt").get \ "id").get)
-      result <- ws.url(s"https://digdag-ee.pyxis-social.com/api/attempts/${attemptId.as[String]}/tasks")
-        .get().map(x => {
-        (Json.parse(x.body) \ "tasks").get.as[JsArray]
-      })
-    } yield result
-  }
-  )
-
-  var dateHeaders = Set.empty[LocalDate]
-
-  lazy val csvHeaders = Source(dateHeaders.toList.sorted(Ordering.by[LocalDate, Long](_.toEpochDay)).map(_.toString).mkString(",") + "\n").map(ByteString(_))
+  private val headerDates: mutable.Set[LocalDate] = scala.collection.mutable.Set.empty
 
   private lazy val sink: Sink[MutableMap[OrgId, (LocalDate, DurationTime)], Future[IOResult]] = Flow[MutableMap[OrgId, (LocalDate, DurationTime)]].
     fold(MutableMap.empty[OrgId, MutableMap[LocalDate, DurationTime]])((acc, ele) => {
@@ -71,19 +59,30 @@ object Main extends App {
 
       sorted
     })
-    .map( x => {
+    .map(x => {
       x.map { case (orgId, innerMap) =>
-        s"$orgId,${innerMap.map { case (_, duration) => duration}.mkString(",")}"
+        s"$orgId,${innerMap.map { case (date, duration) => duration }.mkString(",")}"
       }
     }.mkString("\n"))
     .map(ByteString(_))
-    .prepend(csvHeaders)
-    .toMat(FileIO.toPath(Path.of("result.csv")))(Keep.right)
+    .toMat(FileIO.toPath(Path.of(fileResultName)))(Keep.right)
 
-  def sortStrings(strings: Array[String]): Array[String] = {
-    Sorting.quickSort(strings)
-    strings
+  val fileResultName = args.headOption.getOrElse("result").concat(".csv")
+
+  val startProcessTime = System.currentTimeMillis()
+  private val sessionEndpoints: Seq[String] = Json.parse(jsonString).as[Seq[String]]
+  private val endpointSource = Source(sessionEndpoints)
+  private val fetchAttemptFlow = Flow.fromFunction[String, Future[JsArray]](endpoint => {
+    println(endpoint)
+    for {
+      attemptId <- ws.url(endpoint).get().map(x => ((Json.parse(x.body) \ "lastAttempt").get \ "id").get)
+      result <- ws.url(s"https://digdag-ee.pyxis-social.com/api/attempts/${attemptId.as[String]}/tasks")
+        .get().map(x => {
+        (Json.parse(x.body) \ "tasks").get.as[JsArray]
+      })
+    } yield result
   }
+  )
 
   private def filterOnlyBigQuerySession(jsArray: JsArray): MutableMap[OrgId, (LocalDate, DurationTime)] = {
 
@@ -96,12 +95,13 @@ object Main extends App {
         val orgIdFull = orgIdMap.get(orgIdShort)
         val startTime = ZonedDateTime.parse((ele \ "startedAt").get.as[DurationTime])
         val endTime = ZonedDateTime.parse((ele \ "updatedAt").get.as[DurationTime])
-        dateHeaders += startTime.toLocalDate
-        acc += (orgIdFull.getOrElse("ahihi") -> (startTime.toLocalDate, getDuration(startTime, endTime)))
+        headerDates += startTime.toLocalDate
+        acc += (orgIdFull.getOrElse(orgIdShort) -> (startTime.toLocalDate, getDuration(startTime, endTime)))
       }
       acc
     })
   }
+
 
   private def getDuration(start: ZonedDateTime, end: ZonedDateTime): String = {
     val duration = Duration.between(start, end)
@@ -112,16 +112,43 @@ object Main extends App {
     f"$hours%02d:$minutes%02d:$seconds%02d"
   }
 
-  endpointSource.via(fetchAttemptFlow).mapAsync(6) { jsArrayFuture =>
+  endpointSource.via(fetchAttemptFlow).mapAsync(16) { jsArrayFuture =>
     jsArrayFuture.map(filterOnlyBigQuerySession)
   }.runWith(sink)
-    .andThen({
+    .onComplete{
       case _ =>
+        val endProcessTime = System.currentTimeMillis()
+        println(s"Total time: ${(endProcessTime - startProcessTime) / 1000}s")
+        prependLineToFile()
         ws.close()
         system.terminate()
-    })
+    }
 
 
+  private def prependLineToFile(): Unit = {
+
+    val line = s"org_id, ${headerDates.toList.sorted(Ordering.by[LocalDate, Long](_.toEpochDay)).mkString(",")}"
+    val file = new java.io.File(fileResultName)
+    val tempFilePath = fileResultName + ".tmp"
+
+    val reader = scala.io.Source.fromFile(file)
+    val lines = reader.getLines().toList
+    reader.close()
+
+    val writer = new BufferedWriter(new FileWriter(tempFilePath))
+    writer.write(line)
+    writer.newLine()
+
+    lines.foreach { existingLine =>
+      writer.write(existingLine)
+      writer.newLine()
+    }
+
+    writer.close()
+
+    val tempFile = new java.io.File(tempFilePath)
+    tempFile.renameTo(file)
+  }
 
 
 }
