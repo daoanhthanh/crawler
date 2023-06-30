@@ -1,7 +1,6 @@
 package vn.flinters
 
-import akka.actor.{ActorRef, ActorSystem}
-import akka.pattern.ask
+import akka.actor.ActorSystem
 import akka.stream.scaladsl.{FileIO, Flow, Keep, Sink, Source}
 import akka.stream.{ActorMaterializer, IOResult}
 import akka.util.ByteString
@@ -15,9 +14,9 @@ import java.time.{Duration, LocalDate, ZonedDateTime}
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.collection.mutable.{Map => MutableMap}
-import scala.concurrent.duration.DurationInt
-import scala.concurrent.{Await, ExecutionContextExecutor, Future}
+import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.language.postfixOps
+import scala.util.Success
 
 object Main extends App {
   implicit val system: ActorSystem = ActorSystem("json-reader")
@@ -47,9 +46,11 @@ object Main extends App {
   private val headerDates: mutable.Set[LocalDate] = scala.collection.mutable.Set.empty
 
 
-  val progressBar = new ProgressBar("Crawling data")
+  private val progressBar = new ProgressBar("Crawling data")
+
   progressBar.start()
 
+  private val fileResultName = args.headOption.getOrElse("result").concat(".csv")
 
   private lazy val sink: Sink[MutableMap[OrgId, (LocalDate, DurationTime)], Future[IOResult]] = Flow[MutableMap[OrgId, (LocalDate, DurationTime)]].
     fold(MutableMap.empty[OrgId, MutableMap[LocalDate, DurationTime]])((acc, ele) => {
@@ -78,7 +79,6 @@ object Main extends App {
     .map(ByteString(_))
     .toMat(FileIO.toPath(Path.of(fileResultName)))(Keep.right)
 
-  val fileResultName = args.headOption.getOrElse("result").concat(".csv")
 
   val startProcessTime = System.currentTimeMillis()
   private val sessionEndpoints: Seq[String] = Json.parse(jsonString).as[Seq[String]]
@@ -123,18 +123,18 @@ object Main extends App {
     f"$hours%02d:$minutes%02d:$seconds%02d"
   }
 
-  endpointSource.via(fetchAttemptFlow).mapAsync(16) { jsArrayFuture =>
+  endpointSource.via(fetchAttemptFlow).mapAsync(16)({ jsArrayFuture =>
     jsArrayFuture.map(filterOnlyBigQuerySession)
-  }.runWith(sink)
-    .onComplete{
-      case _ =>
-        val endProcessTime = System.currentTimeMillis()
-        println(s"Total time: ${(endProcessTime - startProcessTime) / 1000}s")
-        prependLineToFile()
-        progressBar.close()
-        ws.close()
-        system.terminate()
-    }
+  }).runWith(sink)
+    .map(_ => {
+      val endProcessTime = System.currentTimeMillis()
+      println(s"Total time: ${(endProcessTime - startProcessTime) / 1000}s")
+      prependLineToFile()
+      progressBar.close()
+      ws.close()
+      system.terminate()
+    })
+
 
 
   private def prependLineToFile(): Unit = {

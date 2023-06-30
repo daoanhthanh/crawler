@@ -1,10 +1,6 @@
 const table = $0;
 const rows = table.querySelectorAll("tr");
 
-const sessionValue = [...rows].map(
-	(row) => [...row.querySelectorAll("td")][0].querySelector("a").pathname
-);
-
 // lấy các pathname dẫn đến api get-session và copy vào clipboard
 copy(
 	[...rows]
