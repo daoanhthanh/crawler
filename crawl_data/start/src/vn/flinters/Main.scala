@@ -48,9 +48,12 @@ object Main extends App {
   }
   )
 
-  private val sink: Sink[MutableMap[OrgId, (LocalDate, DurationTime)], Future[IOResult]] = Flow[MutableMap[OrgId, (LocalDate, DurationTime)]].
-    fold(MutableMap.empty[OrgId, MutableMap[LocalDate, DurationTime]])((acc, ele) => {
+  var dateHeaders = Set.empty[LocalDate]
 
+  lazy val csvHeaders = Source(dateHeaders.toList.sorted(Ordering.by[LocalDate, Long](_.toEpochDay)).map(_.toString).mkString(",") + "\n").map(ByteString(_))
+
+  private lazy val sink: Sink[MutableMap[OrgId, (LocalDate, DurationTime)], Future[IOResult]] = Flow[MutableMap[OrgId, (LocalDate, DurationTime)]].
+    fold(MutableMap.empty[OrgId, MutableMap[LocalDate, DurationTime]])((acc, ele) => {
       ele.foreach(x => {
         val orgId = x._1
         if (acc.contains(orgId)) {
@@ -70,10 +73,11 @@ object Main extends App {
     })
     .map( x => {
       x.map { case (orgId, innerMap) =>
-        s"$orgId, ${innerMap.map { case (_, duration) => duration}.mkString(",")}"
+        s"$orgId,${innerMap.map { case (_, duration) => duration}.mkString(",")}"
       }
     }.mkString("\n"))
     .map(ByteString(_))
+    .prepend(csvHeaders)
     .toMat(FileIO.toPath(Path.of("result.csv")))(Keep.right)
 
   def sortStrings(strings: Array[String]): Array[String] = {
@@ -92,6 +96,7 @@ object Main extends App {
         val orgIdFull = orgIdMap.get(orgIdShort)
         val startTime = ZonedDateTime.parse((ele \ "startedAt").get.as[DurationTime])
         val endTime = ZonedDateTime.parse((ele \ "updatedAt").get.as[DurationTime])
+        dateHeaders += startTime.toLocalDate
         acc += (orgIdFull.getOrElse("ahihi") -> (startTime.toLocalDate, getDuration(startTime, endTime)))
       }
       acc
