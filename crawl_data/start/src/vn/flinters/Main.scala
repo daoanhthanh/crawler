@@ -2,9 +2,9 @@ package vn.flinters
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{FileIO, Flow, Keep, Sink, Source}
-import akka.stream.{ActorMaterializer, IOResult}
+import akka.stream.{ActorAttributes, ActorMaterializer, IOResult, Supervision}
 import akka.util.ByteString
-import play.api.libs.json.{JsArray, Json}
+import play.api.libs.json.{JsArray, JsValue, Json}
 import play.api.libs.ws.ahc.StandaloneAhcWSClient
 import play.shaded.ahc.org.asynchttpclient.DefaultAsyncHttpClient
 
@@ -50,7 +50,7 @@ object Main extends App {
 
   progressBar.start()
 
-  private val fileResultName = args.headOption.getOrElse("result").concat(".csv")
+  private val fileResultName: String = args.headOption.getOrElse("result").concat(".csv")
 
   private lazy val sink: Sink[MutableMap[OrgId, (LocalDate, DurationTime)], Future[IOResult]] = Flow[MutableMap[OrgId, (LocalDate, DurationTime)]].
     fold(MutableMap.empty[OrgId, MutableMap[LocalDate, DurationTime]])((acc, ele) => {
@@ -66,7 +66,7 @@ object Main extends App {
     })
     .map(map => {
       val sorted = map.map(x => {
-        (x._1 -> ListMap(x._2.toSeq.sortBy(_._1)(Ordering.by(_.toEpochDay)): _*))
+        x._1 -> ListMap(x._2.toSeq.sortBy(_._1)(Ordering.by(_.toEpochDay)): _*)
       })
 
       sorted
@@ -84,16 +84,18 @@ object Main extends App {
   private val sessionEndpoints: Seq[String] = Json.parse(jsonString).as[Seq[String]]
 
   private val endpointSource = Source(sessionEndpoints)
-  private val fetchAttemptFlow = Flow.fromFunction[String, Future[JsArray]](endpoint => {
-    for {
+
+  private def fetchAttemptFlow(endpoint: String) = {
+    val data = for {
       attemptId <- ws.url(endpoint).get().map(x => ((Json.parse(x.body) \ "lastAttempt").get \ "id").get)
       result <- ws.url(s"https://digdag-ee.pyxis-social.com/api/attempts/${attemptId.as[String]}/tasks")
         .get().map(x => {
         (Json.parse(x.body) \ "tasks").get.as[JsArray]
       })
     } yield result
+
+    Source.future(data)
   }
-  )
 
   private def filterOnlyBigQuerySession(jsArray: JsArray): MutableMap[OrgId, (LocalDate, DurationTime)] = {
 
@@ -120,20 +122,34 @@ object Main extends App {
     val minutes: Long = duration.toMinutesPart
     val seconds: Long = duration.toSecondsPart
 
-    f"$hours%02d:$minutes%02d:$seconds%02d"
+    val  a =   f"$hours%02d:$minutes%02d:$seconds%02d"
+    println(a)
+    a
   }
 
-  endpointSource.via(fetchAttemptFlow).mapAsync(16)({ jsArrayFuture =>
-    jsArrayFuture.map(filterOnlyBigQuerySession)
-  }).runWith(sink)
-    .map(_ => {
-      val endProcessTime = System.currentTimeMillis()
-      println(s"Total time: ${(endProcessTime - startProcessTime) / 1000}s")
-      prependLineToFile()
-      progressBar.close()
-      ws.close()
-      system.terminate()
-    })
+  val decider: Supervision.Decider = {
+    case e: play.api.libs.json.JsResultException =>
+      println(e.getMessage)
+      Supervision.Resume
+    case e: Throwable =>
+      println(e.getMessage)
+      Supervision.Resume
+  }
+
+  endpointSource.flatMapConcat(fetchAttemptFlow).mapAsync(16)({ jsArray =>
+    Future(filterOnlyBigQuerySession(jsArray))
+  })
+    .withAttributes(ActorAttributes.supervisionStrategy(decider))
+    .runWith(sink)
+    .onComplete {
+      case Success(_) =>
+        val endProcessTime = System.currentTimeMillis()
+        println(s"Total time: ${(endProcessTime - startProcessTime) / 1000}s")
+        prependLineToFile()
+        progressBar.close()
+        ws.close()
+        system.terminate()
+    }
 
 
 
