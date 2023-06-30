@@ -18,7 +18,6 @@ import scala.collection.mutable.{Map => MutableMap}
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{Await, ExecutionContextExecutor, Future}
 import scala.language.postfixOps
-import scala.reflect.io.File
 
 object Main extends App {
   implicit val system: ActorSystem = ActorSystem("json-reader")
@@ -46,6 +45,11 @@ object Main extends App {
   }
 
   private val headerDates: mutable.Set[LocalDate] = scala.collection.mutable.Set.empty
+
+
+  val progressBar = new ProgressBar("Crawling data")
+  progressBar.start()
+
 
   private lazy val sink: Sink[MutableMap[OrgId, (LocalDate, DurationTime)], Future[IOResult]] = Flow[MutableMap[OrgId, (LocalDate, DurationTime)]].
     fold(MutableMap.empty[OrgId, MutableMap[LocalDate, DurationTime]])((acc, ele) => {
@@ -78,9 +82,9 @@ object Main extends App {
 
   val startProcessTime = System.currentTimeMillis()
   private val sessionEndpoints: Seq[String] = Json.parse(jsonString).as[Seq[String]]
+
   private val endpointSource = Source(sessionEndpoints)
   private val fetchAttemptFlow = Flow.fromFunction[String, Future[JsArray]](endpoint => {
-    println(endpoint)
     for {
       attemptId <- ws.url(endpoint).get().map(x => ((Json.parse(x.body) \ "lastAttempt").get \ "id").get)
       result <- ws.url(s"https://digdag-ee.pyxis-social.com/api/attempts/${attemptId.as[String]}/tasks")
@@ -127,6 +131,7 @@ object Main extends App {
         val endProcessTime = System.currentTimeMillis()
         println(s"Total time: ${(endProcessTime - startProcessTime) / 1000}s")
         prependLineToFile()
+        progressBar.close()
         ws.close()
         system.terminate()
     }
